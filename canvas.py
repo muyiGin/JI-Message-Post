@@ -1,19 +1,21 @@
-from bs4 import BeautifulSoup as bs
-from urllib.parse import ParseResultBytes
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 from init import browser
 import time
 import re
-import os
+import pyperclip
 from datetime import datetime
+import smtplib
+import email.utils
+from email.mime.text import MIMEText
 
 CANVAS_URL = "https://jicanvas.com"
 _SJTU_LOGIN="https://jicanvas.com/login/openid_connect"
-USERNAME = "muyi.gin@sjtu.edu.cn"
-PASSWD = "Bao20041102"
+JI_USERNAME = "muyi.gin@sjtu.edu.cn"
+JI_PASSWD = "Bao20041102"
+_FILE_FLAG=0
 
 def fail(reason):
     print(f"{reason}")
@@ -81,52 +83,114 @@ def get_today():
     today=datetime.now().strftime('%Y-%m-%d')
     return today
 
-def dump_content(url):
-    browser_get(url)
-    _wrapper=browser.find_element(By.ID,"content")
-    _tag=_wrapper.find_element(By.TAG_NAME,"h1")
-    _span=_tag.find_element(By.XPATH,"..")
-    content=_span.get_attribute("outerHTML")
-    today=get_today()
-    filename=f"{today}.txt"
-    with open(filename,'a',encoding='utf-8') as file:
-        file.write("此通知链接为："+url+content+"\n")
+def dump_content(urls):
+    for url in urls:
+        browser_get(url)
+        _wrapper=browser.find_element(By.ID,"content")
+        content=_wrapper.get_attribute("outerHTML")
+        today=get_today()
+        filename=f"./dates/{today}.txt"
+        global _FILE_FLAG
+        if _FILE_FLAG:
+            mod='a'
+        else:
+            mod='w'
+            _FILE_FLAG=1
+        print(mod)
+        with open(filename,mod,encoding='utf-8') as file:
+            file.write("此通知链接为："+url+content+"\n")
 
 def get_unread_contents(unread_urls):
     for url in unread_urls:
         browser_get(url)
         _lists=browser.find_element(By.ID,"content")
         _mesgs=_lists.find_elements(By.CLASS_NAME,"ic-item-row.ic-announcement-row")
+        href=[]
         for m in _mesgs:
             _tmp=m.find_element(By.CLASS_NAME,"fOyUs_bGBk.fOyUs_UeJS")
             style=_tmp.get_attribute("style")
-            if re.search(r"margin:\s*([^;]*)1\.5",style):
+            print(style)
+            match=re.search(r"1\.5",style)
+            if match:
                 _tmp1=m.find_element(By.CLASS_NAME,"ic-item-row__content-link")
-                href=_tmp1.get_attribute("href")
+                href.append(_tmp1.get_attribute("href"))
                 print(href)
-                dump_content(href)
+        dump_content(href)
 
 def ask_AI():
     today=get_today()
-    with open(f"./{today}.txt","r",encoding="utf-8") as file:
+    with open(f"./dates/{today}.txt","r",encoding="utf-8") as file:
         content=file.read()
-    message="我现在给你一份资料，里面包含多篇通知，请对他们逐个进行整理,如果是英文你需要将它翻译为中文。我要求的格式是：\n今天的日期与时间：YY-mm-dd xx时xx分 星期几\n链接是：https://xxxxxxx\n标题是：xxxxxx\n内容概述：（这里需要你最精简地用中文概述这篇通知,一定要包括各种你觉得容易遗漏的事情，比如存在附件，截止日期将至，各种要求等等）\n内容全文：（这里将原文放入，英文就放英文，中文就放中文）\n(这里为了排版整齐请空一行)\n接下来请你开始：\n"+content
-    print(message)
+    message="我现在给你一份资料，里面包含多篇通知，请对他们逐个进行整理,如果是英文你需要将它翻译为中文。我要求的格式是：\n此通知发布的日期与时间(不一定是今天的日期，你需要在内容中查找)：YY-mm-dd xx时xx分 星期几\n链接是：https://xxxxxxx\n标题是：xxxxxx\n内容概述：（这里需要你最精简地用中文概述这篇通知,一定要包括各种你觉得容易遗漏的事情，比如存在附件，截止日期将至，各种要求等等\n(这里为了排版整齐请空一行)\n接下来请你开始：\n"+content+"\n然后当你回答完以后，请添加这根分割线在文章末尾=====================================================================\n"
     browser_get("https://www.doubao.com/chat/")
-    time.sleep(3)
     _input=browser.find_element(By.TAG_NAME,"textarea")
     _input.click()
-    _input.send_keys(message)
+    pyperclip.copy(message)
+    _input.send_keys(Keys.CONTROL,'v')
     send_buttom=browser.find_element(By.ID,"flow-end-msg-send")
     send_buttom.click()
+    time.sleep(30)
+    browser.back()
+    browser.forward()
+    try:
+        time.sleep(3)
+        _check=browser.find_element(By.ID,"dialog-0")
+        _quit=_check.find_element(By.CLASS_NAME,"semi-button-content")
+        _quit.click()
+        time.sleep(3)
+    except:
+        pass
+    dump_result()
 
+def dump_result():
+    time.sleep(3)
+    res_html=browser.page_source
+    filename=f"result.txt"
+    with open(filename,'w',encoding='utf-8') as file:
+        file.write(res_html)
 
+def grab_content():
+    with open(f"result.txt","r",encoding="utf-8") as file:
+        text=file.read()
+    pat_get_block=r'={10,}.*?={10,}'
+    block=re.findall(pat_get_block,text,re.DOTALL)
+    block=''.join(block)
+    pat_date=r'(?<=时间：).*?(?=<br)'
+    dates=re.findall(pat_date,block,re.DOTALL)
+    pat_link=r'https://jicanvas.com/[^ <]*(?="\s*target)'
+    links=re.findall(pat_link,block,re.DOTALL)
+    pat_title=r'(?<=标题是：).*?(?=<br)'
+    titles=re.findall(pat_title,block,re.DOTALL)
+    pat_content=r'(?<=内容概述：).*?(?=\s?</div>)'
+    contents=re.findall(pat_content,block,re.DOTALL)
+    res=''
+    for i in range(len(links)):
+        res+='<html><body>'+\
+                '<h1>'+titles[i]+'</h1>'+\
+                '<p>链接：<a href='+links[i]+'>'+dates[i]+'</a></p>'+\
+                '<p>'+contents[i]+'</p>'
+    return res
 
-#  browser_get(CANVAS_URL)
-#  login_check()
-#  unread_urls=unread_counts()
-#  print(unread_urls)
-#  get_unread_contents(unread_urls)
+def send_mail(content):
+    FROM='1458652882@qq.com'
+    TO='muyi.gin@sjtu.edu.cn'
+    AUTH='wefmnhbnzydhbadc'
+    message = MIMEText(content,'html','utf-8')
+    message['From'] = email.utils.formataddr(('笨蛋机器人', FROM))
+    message['To'] = email.utils.formataddr(('亲爱的主人', TO))
+    message['Subject'] = "Canvas更新于"+datetime.now().strftime("%m月%d日 %H:%M:%S")
+    server = smtplib.SMTP_SSL('smtp.qq.com', 465)
+    server.login(FROM,AUTH)
+    server.set_debuglevel(True)
+    try:
+        server.sendmail(FROM,[TO],msg=message.as_string())
+    finally:
+        server.quit()
+
+browser_get(CANVAS_URL)
+login_check()
+unread_urls=unread_counts()
+print(unread_urls)
+get_unread_contents(unread_urls)
 ask_AI()
-
-
+send_mail(grab_content())
