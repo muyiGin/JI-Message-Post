@@ -1,8 +1,8 @@
+from init import *
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.keys import Keys
-from init import browser
 import time
 import re
 import pyperclip
@@ -10,13 +10,11 @@ from datetime import datetime
 import smtplib
 import email.utils
 from email.mime.text import MIMEText
-
+import ddddocr
+# 网站设置
 CANVAS_URL = "https://jicanvas.com"
 _SJTU_LOGIN="https://jicanvas.com/login/openid_connect"
-JI_USERNAME = "muyi.gin@sjtu.edu.cn"
-JI_PASSWD = "Bao20041102"
 _FILE_FLAG=0
-
 def fail(reason):
     print(f"{reason}")
     browser.quit()
@@ -24,11 +22,35 @@ def fail(reason):
 def browser_get(url):
     browser.get(url)
     time.sleep(3)
+def ddddocr_detect(img):
+    ocr=ddddocr.DdddOcr()
+    with open(f"./{img}.png",'rb') as f:
+        img_bytes=f.read()
+    res=ocr.classification(img_bytes)
+    return res
+def get_identifier():
+    browser.maximize_window()
+    browser.execute_script('document.body.style.zoom="0.8"')
+    img=browser.find_element(By.ID,"captcha-img")
+    img.screenshot("img.png")
 
 def login():
     browser_get(_SJTU_LOGIN)
+    if DEFAULT_LOGIN_MODE:
+        get_identifier()
+        identifier=ddddocr_detect("img")
+        block=browser.find_element(By.ID,"login-with-password")
+        user_input=block.find_element(By.ID,"input-login-user")
+        user_passwd=block.find_element(By.ID,"input-login-pass")
+        capt_input=block.find_element(By.ID,"input-login-captcha")
+        user_input.send_keys(JI_USERNAME)
+        user_passwd.send_keys(JI_PASSWD)
+        capt_input.send_keys(identifier) 
+        block.find_element(By.ID,"submit-password-button").click()
+    else:
+        pass
     try:
-        WebDriverWait(browser,30,0.5).until(
+        WebDriverWait(browser,60,0.5).until(
                 lambda browser:browser.find_element(By.ID,"dashboard")
                 )
         return
@@ -39,10 +61,8 @@ def login_check():
     for _ in range(2):
         try:
             if "login" in browser.current_url:
-                print("需要登录。")
                 login()
             if browser.find_element(By.ID,"dashboard"):
-                print("成功登录。")
                 return
         except NoSuchElementException:
             continue
@@ -109,12 +129,10 @@ def get_unread_contents(unread_urls):
         for m in _mesgs:
             _tmp=m.find_element(By.CLASS_NAME,"fOyUs_bGBk.fOyUs_UeJS")
             style=_tmp.get_attribute("style")
-            print(style)
             match=re.search(r"1\.5",style)
             if match:
                 _tmp1=m.find_element(By.CLASS_NAME,"ic-item-row__content-link")
                 href.append(_tmp1.get_attribute("href"))
-                print(href)
         dump_content(href)
 
 def ask_AI():
@@ -190,7 +208,8 @@ def send_mail(content):
 browser_get(CANVAS_URL)
 login_check()
 unread_urls=unread_counts()
-print(unread_urls)
-get_unread_contents(unread_urls)
-ask_AI()
-send_mail(grab_content())
+if unread_urls:
+    get_unread_contents(unread_urls)
+    ask_AI()
+    send_mail(grab_content())
+browser.quit()
